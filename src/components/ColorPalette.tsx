@@ -2,7 +2,14 @@ import React, { useState, useCallback } from 'react';
 import { RefreshCw, Download, Share2, Copy, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ColorSwatch } from './ColorSwatch';
+import { PaletteSettings } from './PaletteSettings';
 import { useToast } from '@/hooks/use-toast';
+import { 
+  generatePalette, 
+  ColorHarmony, 
+  ColorTheme,
+  generateRandomColor 
+} from '@/utils/colorGeneration';
 
 interface ColorInfo {
   color: string;
@@ -12,7 +19,13 @@ interface ColorInfo {
 export const ColorPalette: React.FC = () => {
   const { toast } = useToast();
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Palette configuration
+  const [colorCount, setColorCount] = useState(5);
+  const [harmony, setHarmony] = useState<ColorHarmony>('random');
+  const [theme, setTheme] = useState<ColorTheme>('vibrant');
 
+  // Initialize palette with better default colors
   const [palette, setPalette] = useState<ColorInfo[]>([
     { color: '#8B5CF6', locked: false }, // Purple
     { color: '#EC4899', locked: false }, // Pink  
@@ -21,30 +34,84 @@ export const ColorPalette: React.FC = () => {
     { color: '#F59E0B', locked: false }, // Amber
   ]);
 
-  const generateRandomColor = () => {
-    const letters = '0123456789ABCDEF';
-    let color = '#';
-    for (let i = 0; i < 6; i++) {
-      color += letters[Math.floor(Math.random() * 16)];
-    }
-    return color;
-  };
+  // Update palette size when colorCount changes
+  React.useEffect(() => {
+    setPalette(prev => {
+      const newPalette = [...prev];
+      
+      // If we need more colors, add them
+      while (newPalette.length < colorCount) {
+        newPalette.push({ 
+          color: generateRandomColor(theme), 
+          locked: false 
+        });
+      }
+      
+      // If we need fewer colors, remove from the end (but keep locked colors)
+      if (newPalette.length > colorCount) {
+        const lockedIndices = new Set(
+          newPalette.map((_, index) => index)
+            .filter(index => newPalette[index].locked && index < colorCount)
+        );
+        
+        // Keep first colorCount items, prioritizing locked colors
+        const finalPalette: ColorInfo[] = [];
+        let keptLocked = 0;
+        
+        // First, add all locked colors that fit within the new count
+        for (let i = 0; i < newPalette.length && finalPalette.length < colorCount; i++) {
+          if (newPalette[i].locked && keptLocked < colorCount) {
+            finalPalette.push(newPalette[i]);
+            keptLocked++;
+          }
+        }
+        
+        // Then fill remaining slots with unlocked colors
+        for (let i = 0; i < newPalette.length && finalPalette.length < colorCount; i++) {
+          if (!newPalette[i].locked) {
+            finalPalette.push(newPalette[i]);
+          }
+        }
+        
+        // If we still don't have enough, generate new ones
+        while (finalPalette.length < colorCount) {
+          finalPalette.push({ 
+            color: generateRandomColor(theme), 
+            locked: false 
+          });
+        }
+        
+        return finalPalette.slice(0, colorCount);
+      }
+      
+      return newPalette.slice(0, colorCount);
+    });
+  }, [colorCount, theme]);
 
-  const generatePalette = useCallback(() => {
+  const generateNewPalette = useCallback(() => {
     setIsGenerating(true);
     
     // Simulate generation delay for better UX
     setTimeout(() => {
+      // Get locked colors with their indices
+      const lockedColors = palette
+        .map((colorInfo, index) => ({ index, color: colorInfo.color, locked: colorInfo.locked }))
+        .filter(item => item.locked);
+
+      // Generate new palette using advanced algorithm
+      const newColors = generatePalette(colorCount, harmony, theme, lockedColors);
+      
+      // Update palette maintaining lock states
       setPalette(prev => 
-        prev.map(colorInfo => 
-          colorInfo.locked 
-            ? colorInfo 
-            : { ...colorInfo, color: generateRandomColor() }
-        )
+        newColors.map((color, index) => ({
+          color,
+          locked: index < prev.length ? prev[index].locked : false
+        }))
       );
+      
       setIsGenerating(false);
     }, 300);
-  }, []);
+  }, [palette, colorCount, harmony, theme]);
 
   const toggleLock = useCallback((index: number) => {
     setPalette(prev => 
@@ -80,10 +147,18 @@ export const ColorPalette: React.FC = () => {
   }, [palette, toast]);
 
   const exportPalette = useCallback(() => {
-    // Create a simple text export for now
+    // Create a comprehensive export with metadata
     const exportData = {
       colors: palette.map(p => p.color),
-      created: new Date().toISOString(),
+      settings: {
+        count: colorCount,
+        harmony,
+        theme
+      },
+      metadata: {
+        created: new Date().toISOString(),
+        generator: 'ColorCraft'
+      }
     };
     
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
@@ -92,7 +167,7 @@ export const ColorPalette: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'color-palette.json';
+    link.download = `color-palette-${harmony}-${theme}.json`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -102,14 +177,14 @@ export const ColorPalette: React.FC = () => {
       description: 'Palette exported successfully',
       duration: 2000,
     });
-  }, [palette, toast]);
+  }, [palette, colorCount, harmony, theme, toast]);
 
   return (
     <div className="w-full max-w-7xl mx-auto space-y-8">
       {/* Controls */}
       <div className="flex flex-col sm:flex-row gap-4 items-center justify-center">
         <Button
-          onClick={generatePalette}
+          onClick={generateNewPalette}
           disabled={isGenerating}
           className="bg-gradient-primary text-primary-foreground hover:opacity-90 transition-opacity duration-300 px-8 py-6 text-lg font-semibold rounded-[var(--radius)] shadow-glass"
         >
@@ -122,6 +197,15 @@ export const ColorPalette: React.FC = () => {
         </Button>
 
         <div className="flex gap-2">
+          <PaletteSettings
+            colorCount={colorCount}
+            harmony={harmony}
+            theme={theme}
+            onColorCountChange={setColorCount}
+            onHarmonyChange={setHarmony}
+            onThemeChange={setTheme}
+          />
+          
           <Button
             variant="outline"
             onClick={copyAllColors}
@@ -152,8 +236,15 @@ export const ColorPalette: React.FC = () => {
       </div>
 
       {/* Color Swatches */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
-        {palette.map((colorInfo, index) => (
+      <div className={`grid gap-6 ${
+        colorCount <= 3 ? 'grid-cols-1 sm:grid-cols-3' :
+        colorCount <= 4 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4' :
+        colorCount <= 5 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-5' :
+        colorCount <= 6 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' :
+        colorCount <= 8 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4' :
+        'grid-cols-1 sm:grid-cols-2 lg:grid-cols-5'
+      }`}>
+        {palette.slice(0, colorCount).map((colorInfo, index) => (
           <div key={index} className="animate-float-up" style={{ animationDelay: `${index * 100}ms` }}>
             <ColorSwatch
               color={colorInfo.color}
@@ -168,8 +259,8 @@ export const ColorPalette: React.FC = () => {
       <div className="glass-card p-6 text-center space-y-2">
         <h3 className="text-lg font-semibold text-foreground">💡 Pro Tips</h3>
         <p className="text-muted-foreground">
-          Click the lock icon to keep a color while generating new ones. 
-          Click on any color or code to copy it instantly.
+          Use the settings to adjust palette size (3-10 colors), choose color harmonies, and select themes. 
+          Lock colors you love and generate new combinations around them.
         </p>
       </div>
     </div>
